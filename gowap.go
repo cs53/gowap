@@ -21,6 +21,8 @@ type collyData struct {
 	headers map[string][]string
 	scripts []string
 	cookies map[string]string
+	jsGlobalVars   map[string]interface{} // Add this field
+
 }
 
 type temp struct {
@@ -261,7 +263,7 @@ func analyzeCookies(app *application, cookies map[string]string, detectedApplica
 	}
 }
 
-func analyzeHTML(app *application, html string, detectedApplications *map[string]*resultApp) {
+func analyzeHTML(app *application, html string, detectedApplications *map[string]*resultApp,jsGlobalVars *map[string]interface{})  {
 	patterns := parsePatterns(app.HTML)
 	for _, v := range patterns {
 		for _, pattrn := range v {
@@ -271,11 +273,44 @@ func analyzeHTML(app *application, html string, detectedApplications *map[string
 					(*detectedApplications)[resApp.Name] = resApp
 					detectVersion(resApp, pattrn, &html)
 				}
+				// Extract global variables from the window object
+				extractGlobalVarsFromWindow(html, jsGlobalVars)
+			}
 			}
 		}
 
 	}
 }
+func extractGlobalVarsFromWindow(html string, jsGlobalVars *map[string]interface{}) {
+	regex := regexp.MustCompile(`window\.(\w+)\s*=\s*(.*?);`)
+	matches := regex.FindAllStringSubmatch(html, -1)
+	for _, match := range matches {
+		key := match[1]
+		value := match[2]
+
+		// Trim any leading/trailing whitespace
+		value = strings.TrimSpace(value)
+
+		// Check if the value is an object or array literal
+		if (strings.HasPrefix(value, "{") && strings.HasSuffix(value, "}")) ||
+			(strings.HasPrefix(value, "[") && strings.HasSuffix(value, "]")) {
+
+			// Parse the value using a JSON decoder
+			var parsedValue interface{}
+			if err := json.Unmarshal([]byte(value), &parsedValue); err == nil {
+				(*jsGlobalVars)[key] = parsedValue
+			} else {
+				// Parsing error, just store the raw string value
+				(*jsGlobalVars)[key] = value
+			}
+		} else {
+			// Simple value (string, number, boolean, etc.)
+			(*jsGlobalVars)[key] = value
+		}
+	}
+}
+
+
 
 func detectVersion(app *resultApp, pattrn *pattern, value *string) {
 	versions := make(map[string]interface{})
